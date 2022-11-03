@@ -1,14 +1,18 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+#include <stdio.h>
+#include <ctype.h>
 
 #define T double
-#define SIZE 0x10000
+#define SIZE 0x100000
 
 typedef union {
 	T tvalue;
 	uint64_t intvalue;
 	char charvalue;
+	uint16_t regvalue;
 	char* strvalue;
 } operand;
 
@@ -40,16 +44,22 @@ typedef enum {
 	OP_COS,
 	OP_TAN,
 	OP_RT,
-	OP_TEST,
 	OP_IFBEGIN,
 	OP_IFEND,
 	OP_LOOPBEGIN,
 	OP_LOOPEND,
 	OP_FDEFBEGIN,
 	OP_FDEFEND,
+	OP_FCALL,
 	OP_JMP,
+	OP_PUSHIP,
 	OP_STORE,
-	OP_LOAD
+	OP_LOAD,
+	OP_DUP,
+	OP_TESTEQ,
+	OP_TESTGT,
+	OP_TESTLT,
+	OP_EXIT
 } optype;
 
 typedef struct {
@@ -57,12 +67,104 @@ typedef struct {
 	operand arg;
 } operation;
 
+typedef struct entry {
+	char* key;
+	uint64_t value;
+	struct entry* next;
+} entry;
+
+typedef struct hashtable {
+	int size;
+	struct entry** table; 
+} hashtable;
+
+hashtable* ht_create(int size) {
+	hashtable* ht = NULL;
+	int i;
+	if (size < 1) return NULL;
+	if ((ht = malloc(sizeof(hashtable))) == NULL) {
+		free(ht);
+		return NULL;
+	}
+	if ((ht->table = malloc(sizeof(entry*) * size)) == NULL) {
+		free(ht);
+		return NULL;
+	}
+	for (i = 0; i < size; i++) {
+		ht->table[i] == NULL;
+	}
+	ht->size = size;
+	return ht;
+}
+
+int32_t ht_hash(size_t ht_size, char* key) {
+	uint32_t hash = 0, g;
+	register char* p;
+	for (p = key; *p; p++) {
+		hash = (hash << 4) + *p;
+		if ((g = hash & 0xf0000000)) {
+			hash ^= g >> 24;
+			hash ^= g;
+		}
+	}
+	return hash % ht_size;
+}
+
+entry* ht_newpair(char* key, uint64_t value) {
+	entry* newpair;
+	if ((newpair = malloc(sizeof(entry))) == NULL) return NULL;
+	if ((newpair->key = strdup(key)) == NULL) return NULL;
+	newpair->value = value;
+	newpair->next = NULL;
+	return newpair;
+}
+
+void ht_set(hashtable* ht, char* key, uint64_t value) {
+	int bin = 0;
+	entry *newpair = NULL;
+	entry *next = NULL;
+	entry *last = NULL;
+	bin = ht_hash(ht->size, key);
+	next = ht->table[bin];
+	while (next != NULL && next->key != NULL && strcmp(key, next->key) > 0) {
+		last = next;
+		next = next->next;
+	}
+	if (next != NULL && next->key != NULL && strcmp(key, next->key) == 0) {
+		next->value = value;
+	}
+	else {
+		newpair = ht_newpair(key, value);
+		if (next == ht->table[bin]) {
+			newpair->next = next;
+			ht->table[bin] = newpair;
+		}
+		else if (next == NULL) last->next = newpair;
+		else {
+			newpair->next = next;
+			last->next = newpair;
+		}
+	}
+}
+
+uint64_t ht_get(hashtable* ht, char* key) {
+	int bin = 0;
+	entry* pair;
+	bin = ht_hash(ht->size, key);
+	pair = ht->table[bin];
+	while (pair != NULL && pair->key != NULL && strcmp(key, pair->key) > 0) {
+		pair = pair->next;
+	}
+	if (pair == NULL || pair->key == NULL || strcmp(key, pair->key) != 0) return 0;
+	else return pair->value;
+}
+
 typedef struct {
 	operand data[SIZE];
 	unsigned long sp;
 } stack;
 
-void push(stack* s, T i) {
+void push(stack* s, operand i) {
 	if ((s->sp) < SIZE) {
 		s->data[s->sp] = i;
 		(s->sp)++;
@@ -78,31 +180,37 @@ void init(stack** s) {
 	reset(*s);
 }
 
-T pop(stack* s) {
+operand pop(stack* s) {
 	if ((s->sp) > 0) {
 		(s->sp)--;
 		return s->data[(s->sp)];
 	}
-	return 0;
+	return (operand){.intvalue = 0};
 }
 
-T peek(stack* s) {
+operand peek(stack* s) {
 	if ((s->sp) > 0) return s->data[(s->sp) - 1];
-	return 0;
+	return (operand){.intvalue = 0};
 }
 
 stack* working_stack;
 stack* call_stack;
+operand regs[0x10000];
+hashtable* functab;
+
 struct {
 	operation code[SIZE];
-	unsigned long ip = 0;
-} state;
+	uint64_t ip;
+} state = {
+	.ip = 0
+};
 
 void readop(FILE* f) {
 	char c = fgetc(f);
 	while (isspace(c)) {
 		c = fgetc(f);
 	}
+	if (feof(f)) return;
 	operation op;
 	switch(c) {
 		case '+':
@@ -113,7 +221,10 @@ void readop(FILE* f) {
 			break;
 		case '*':
 			if (fgetc(f) == '*') op.op = OP_EXP;
-			else op.op = OP_MUL;
+			else {
+				fseek(f, -1, SEEK_CUR);
+				op.op = OP_MUL;
+			}
 			break;
 		case '/':
 			op.op = OP_DIV;
@@ -177,14 +288,14 @@ void readop(FILE* f) {
 			fscanf(f, "%ld", &(op.arg.intvalue));
 			break;
 		case 'C':
-			op.op = OP_CGET;
+			op.op = OP_PSHC;
 			if (fgetc(f) == '\'') op.arg.charvalue = fgetc(f);
 			else if (fgetc(f) == 'x') scanf("%hhx", &(op.arg.charvalue));
 			break;
-		case 'S':
-			op.op = OP_STRGET;
+		case '"':
+			op.op = OP_PSHSTR;
 			op.arg.strvalue = (char*)malloc(256);
-			fscanf(f, "%255[^\n]" op.arg.strvalue);
+			fscanf(f, "%255[^\"]", op.arg.strvalue);
 			break;
 		case '_':
 			char opstr[4];
@@ -193,8 +304,14 @@ void readop(FILE* f) {
 			if (!strcmp(opstr, "cos")) op.op = OP_COS;
 			if (!strcmp(opstr, "tan")) op.op = OP_TAN;
 			break;
-		case '?':
-			op.op = OP_TEST;
+		case '=':
+			op.op = OP_TESTEQ;
+			break;
+		case '>': 
+			op.op = OP_TESTGT;
+			break;
+		case '<':
+			op.op = OP_TESTLT;
 			break;
 		case '(':
 			op.op = OP_IFBEGIN;
@@ -219,108 +336,214 @@ void readop(FILE* f) {
 			break;
 		case 's':
 			op.op = OP_STORE;
-			op.arg.charvalue = fgetc(f);
+			op.arg.regvalue = (fgetc(f) << 8) & fgetc(f);
+			break;
+		case 'j':
+			op.op = OP_JMP;
+			break;
+		case '$':
+			op.op = OP_PUSHIP;
 			break;
 		case 'l':
 			op.op = OP_LOAD;
-			op.arg.charvalue = fgetc(f);
+			op.arg.regvalue = (fgetc(f) << 8) & fgetc(f);
+			break;
+		case 'd':
+			op.op = OP_DUP;
+			break;
+		case 'q':
+			op.op = OP_EXIT;
+			break;
 	}
-	if (loc < SIZE) state.code[state.ip] = op;
-	// else error
+	if (state.ip < SIZE) state.code[state.ip] = op;
+	else exit(1);
 	state.ip++;
 }
 
+void tonext(optype skipop, optype op) {
+	uint64_t skip = 0;
+	state.ip++;
+	while (state.code[state.ip].op != op || skip > 0) {
+		if (state.code[state.ip].op == skipop) skip += 1;
+		state.ip++;
+	}
+	state.ip--;
+}
+
 void parseop() {
+	operand result, jloc;
 	switch (state.code[state.ip].op) {
 		case OP_ADD:
-			operand result = {.tvalue = pop(working_stack).tvalue + pop(working_stack).tvalue};
+			result = (operand){.tvalue = pop(working_stack).tvalue + pop(working_stack).tvalue};
 			push(working_stack, result);
 			break;
 		case OP_SUB:
 			T sub1 = pop(working_stack).tvalue;
 			T sub2 = pop(working_stack).tvalue;
-			operand result = {.tvalue = sub1 % sub2};
+			result = (operand){.tvalue = sub2 - sub1};
 			push(working_stack, result);
 			break;
 		case OP_MUL:
-			operand result = {.tvalue = pop(working_stack).tvalue * pop(working_stack).tvalue};
+			result = (operand){.tvalue = pop(working_stack).tvalue * pop(working_stack).tvalue};
 			push(working_stack, result);
 			break;
 		case OP_DIV:
 			T div1 = pop(working_stack).tvalue;
 			T div2 = pop(working_stack).tvalue;
-			operand result = {.tvalue = div1 % div2};
+			result = (operand){.tvalue = div2 / div1};
 			push(working_stack, result);
 			break;
 		case OP_REM:
-			T rem1 = pop(working_stack).tvalue;
-			T rem2 = pop(working_stack).tvalue;
-			operand result = {.tvalue = rem1 % rem2};
+			uint64_t rem1 = pop(working_stack).intvalue;
+			uint64_t rem2 = pop(working_stack).intvalue;
+			result = (operand){.intvalue = rem2 % rem1};
 			push(working_stack, result);
 			break;
 		case OP_EXP:
 			T exp1 = pop(working_stack).tvalue;
 			T exp2 = pop(working_stack).tvalue;
-			operand result = {.tvalue = pow(exp1, exp2)};
+			result = (operand){.tvalue = pow(exp2, exp1)};
 			push(working_stack, result);
 			break;
 		case OP_RT:
 			T rt1 = pop(working_stack).tvalue;
 			T rt2 = pop(working_stack).tvalue;
-			operand result = {.tvalue = pow(rt1, 1 / rt2)};
+			result = (operand){.tvalue = pow(rt2, 1 / rt1)};
 			push(working_stack, result);
 			break;
 		case OP_SIN:
-			operand result = {.tvalue = sin(pop(working_stack).tvalue)};
+			result = (operand){.tvalue = sin(pop(working_stack).tvalue)};
 			push(working_stack, result);
 			break;
 		case OP_COS:
-			operand result = {.tvalue = tan(pop(working_stack).tvalue)};
+			result = (operand){.tvalue = tan(pop(working_stack).tvalue)};
 			push(working_stack, result);
 			break;
 		case OP_TAN:
-			operand result = {.tvalue = tan(pop(working_stack).tvalue)};
+			result = (operand){.tvalue = tan(pop(working_stack).tvalue)};
 			push(working_stack, result);
 			break;
 		case OP_AND:
-			operand result = {.intvalue = pop(working_stack).intvalue & pop(working_stack).intvalue};
+			result = (operand){.intvalue = pop(working_stack).intvalue & pop(working_stack).intvalue};
 			push(working_stack, result);
 			break;
 		case OP_OR:
-			operand result = {.intvalue = pop(working_stack).intvalue | pop(working_stack).intvalue};
+			result = (operand){.intvalue = pop(working_stack).intvalue | pop(working_stack).intvalue};
 			push(working_stack, result);
 			break;
 		case OP_XOR:
-			operand result = {.intvalue = pop(working_stack).intvalue ^ pop(working_stack).intvalue};
+			result = (operand){.intvalue = pop(working_stack).intvalue ^ pop(working_stack).intvalue};
 			push(working_stack, result);
 			break;
 		case OP_PSHT:
 		case OP_PSHI:
 		case OP_PSHC:
 		case OP_PSHSTR:
-			push(working_stack, state.code[state.ip].op.arg);
+			push(working_stack, state.code[state.ip].arg);
 			break;
 		case OP_TGET:
-			scanf("%lf", &(op.arg.tvalue));
+			scanf("%lf", &(result.tvalue));
+			push(working_stack, result);
 			break;
 		case OP_IGET:
-			scanf("%lx", &(op.arg.tvalue));
+			scanf("%lx", &(result.intvalue));
+			push(working_stack, result);
 			break;
 		case OP_CGET:
-			if (fgetc(f) == '\'') op.arg.charvalue = fgetc(f);
-			else if (fgetc(f) == 'x') scanf("%hhx", &(op.arg.charvalue));
+			if (fgetc(stdin) == '\'') result.charvalue = fgetc(stdin);
+			else if (fgetc(stdin) == 'x') scanf("%hhx", &(result.charvalue));
+			push(working_stack, result);
 			break;
 		case OP_STRGET:
-			op.arg.strvalue = (char*)malloc(256);
-			scanf("%255[^\n]", op.arg.strvalue);
+			result.strvalue = (char*)malloc(256);
+			scanf("%255[^\n]", result.strvalue);
+			push(working_stack, result);
 			break;
-		case TPRINT:
+		case OP_TPRINT:
+			printf("%lf", pop(working_stack).tvalue);
 			break;
-		case IPRINT:
+		case OP_IPRINT:
+			printf("%lx", pop(working_stack).intvalue);
 			break;
-		case CPRINT:
+		case OP_CPRINT:
+			printf("%c", pop(working_stack).charvalue);
 			break;
-		case STRPRINT:
+		case OP_STRPRINT:
+			printf("%s", peek(working_stack).strvalue);
+			break;
+		case OP_TESTEQ:
+			result = (operand){.intvalue = pop(working_stack).tvalue == pop(working_stack).tvalue ? 1 : 0};
+			push(working_stack, result);
+			break;
+		case OP_TESTGT:
+			result = (operand){.intvalue = pop(working_stack).tvalue < pop(working_stack).tvalue ? 1 : 0};
+			push(working_stack, result);
+			break;
+		case OP_TESTLT:
+			result = (operand){.intvalue = pop(working_stack).tvalue > pop(working_stack).tvalue ? 1 : 0};
+			push(working_stack, result);
+			break;
+		case OP_IFBEGIN:
+			if (!pop(working_stack).intvalue) tonext(OP_IFBEGIN, OP_IFEND);
+		case OP_IFEND:
+			break;
+		case OP_LOOPBEGIN:
+			if (!peek(working_stack).intvalue) tonext(OP_LOOPBEGIN, OP_LOOPEND);
+			jloc = (operand){.intvalue = state.ip};
+			push(call_stack, jloc);
+			break;
+		case OP_LOOPEND:
+			if (!peek(working_stack).intvalue) state.ip = pop(call_stack).intvalue;
+			break;
+		case OP_FDEFBEGIN:
+			ht_set(functab, peek(working_stack).strvalue, state.ip);
+			tonext(OP_FDEFBEGIN, OP_FDEFEND);
+			state.ip++;
+			break;
+		case OP_FDEFEND:
+			state.ip = pop(call_stack).intvalue;
+			break;
+		case OP_FCALL:
+			jloc = (operand){.intvalue = state.ip};
+			push(call_stack, jloc);
+			state.ip = ht_get(functab, peek(working_stack).strvalue);
+			break;
+		case OP_LOAD:
+			regs[state.code[state.ip].arg.regvalue] = pop(working_stack);
+			break;
+		case OP_STORE:
+			push(working_stack, regs[state.code[state.ip].arg.regvalue]);
+			break;
+		case OP_JMP:
+			state.ip = pop(working_stack).intvalue;
+			break;
+		case OP_PUSHIP:
+			operand ip = (operand){.intvalue = state.ip};
+			push(working_stack, ip);
+			break;
+		case OP_DUP:
+			push(working_stack, peek(working_stack));
+			break;
+		case OP_FREESTR:
+			free(pop(working_stack).strvalue);
+			break;
+		case OP_EXIT:
+			fputc('\n', stdout);
+			exit(0);
 			break;
 	}
+	state.ip++;
+}
+
+int main(int argc, char** argv) {
+	FILE* f;
+	if (argc < 2) exit(-1);
+	if (argv[1][0] == '-') f = stdin;
+	else f = fopen(argv[1], "r");
+	init(&working_stack);
+	init(&call_stack);
+	functab = ht_create(0x10000);
+	while (!feof(f)) readop(f);
+	state.ip = 0;
+	while(1) parseop();	
 }
