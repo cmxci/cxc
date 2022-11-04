@@ -8,8 +8,8 @@
 #include <gmp.h>
 #include <mpfr.h>
 
-#define T double
 #define SIZE 0x100000
+#define DEBUG 1
 
 typedef struct {
 	union {
@@ -19,15 +19,23 @@ typedef struct {
 		uint16_t regvalue;
 		char* strvalue;
 	};
-	char clear_mpfr;
+	unsigned char clear_mpfr;
 } operand;
 
 typedef enum {
-	OP_ADD,
+	OP_ADD = 1,
 	OP_SUB,
 	OP_MUL,
 	OP_DIV,
 	OP_REM,
+	OP_IADD,
+	OP_ISUB,
+	OP_IRSH,
+	OP_ILSH,
+	OP_IINC,
+	OP_IDEC,
+	OP_IMUL,
+	OP_IDIV,
 	OP_PSHT,
 	OP_PSHI,
 	OP_PSHC,
@@ -97,7 +105,7 @@ hashtable* ht_create(int size) {
 		return NULL;
 	}
 	for (i = 0; i < size; i++) {
-		ht->table[i] == NULL;
+		ht->table[i] = NULL;
 	}
 	ht->size = size;
 	return ht;
@@ -172,10 +180,9 @@ typedef struct {
 
 operand operand_mpfr_init() {
 	operand r;
-	mpfr_t tmp;
-	mpfr_init2(tmp, 256);
 	r.clear_mpfr = 0xFF;
-	mpfr_set(r.tvalue, tmp, MPFR_RNDN);
+	mpfr_init2(r.tvalue, 256);
+	mpfr_set_d(r.tvalue, 0.0, MPFR_RNDN);
 	return r;
 }
 
@@ -204,9 +211,22 @@ operand pop(stack* s) {
 	return (operand){.intvalue = 0};
 }
 
+operand pop_mpfrdefault(stack* s) {
+	if ((s->sp) > 0) {
+		(s->sp)--;
+		return s->data[(s->sp)];
+	}
+	return operand_mpfr_init();
+}
+
 operand peek(stack* s) {
 	if ((s->sp) > 0) return s->data[(s->sp) - 1];
 	return (operand){.intvalue = 0};
+}
+
+operand peek_mpfrdefault(stack* s) {
+	if ((s->sp) > 0) return s->data[(s->sp) - 1];
+	return operand_mpfr_init();
 }
 
 stack* working_stack;
@@ -216,9 +236,9 @@ hashtable* functab;
 
 struct {
 	operation code[SIZE];
-	uint64_t ip;
+	uint64_t rip, wip;
 } state = {
-	.ip = 0
+	.rip = 0, .wip = 0
 };
 
 void readop(FILE* f) {
@@ -229,6 +249,7 @@ void readop(FILE* f) {
 	if (feof(f)) return;
 	operation op;
 	char opstr[4];
+	if (DEBUG) printf("'%c',", c);
 	switch(c) {
 		case '+':
 			op.op = OP_ADD;
@@ -296,34 +317,38 @@ void readop(FILE* f) {
 		case 'f':
 			op.op = OP_FREESTR;
 			break;
-		case 'F':
-		default:
-			op.op = OP_PSHT;
-			operand psht = operand_mpfr_init();
-			char* frstr = (char*)malloc(256);
-			fscanf(f, "%255[^;]", frstr);
-			mpfr_strtofr(psht.tvalue, frstr, NULL, 0, MPFR_RNDN);
-			op.arg = psht;
-			break;
 		case 'I':
 			op.op = OP_PSHI;
 			fscanf(f, "%lx", &(op.arg.intvalue));
 			break;
 		case 'C':
 			op.op = OP_PSHC;
-			if (fgetc(f) == '\'') op.arg.charvalue = fgetc(f);
-			else if (fgetc(f) == 'x') scanf("%hhx", &(op.arg.charvalue));
+			if (fgetc(f) == '\'') {
+				op.arg.charvalue = fgetc(f);
+				break;
+			}
+			else if (fgetc(f) == 'x') scanf("%2hhx", &(op.arg.charvalue));
+			fgetc(f);
 			break;
 		case '"':
 			op.op = OP_PSHSTR;
 			op.arg.strvalue = (char*)malloc(256);
 			fscanf(f, "%255[^\"]", op.arg.strvalue);
+			fgetc(f);
 			break;
 		case '_':
-			fgets(opstr, 3, f);
+			fgets(opstr, 4, f);
 			if (!strcmp(opstr, "sin")) op.op = OP_SIN;
 			if (!strcmp(opstr, "cos")) op.op = OP_COS;
 			if (!strcmp(opstr, "tan")) op.op = OP_TAN;
+			if (!strcmp(opstr, "Iad")) op.op = OP_IADD;
+			if (!strcmp(opstr, "Isb")) op.op = OP_ISUB;
+			if (!strcmp(opstr, "Isr")) op.op = OP_IRSH;
+			if (!strcmp(opstr, "Isl")) op.op = OP_ILSH;
+			if (!strcmp(opstr, "Iin")) op.op = OP_IINC;
+			if (!strcmp(opstr, "Ide")) op.op = OP_IDEC;
+			if (!strcmp(opstr, "Iml")) op.op = OP_IMUL;
+			if (!strcmp(opstr, "Idv")) op.op = OP_IDIV;
 			break;
 		case '=':
 			op.op = OP_TESTEQ;
@@ -375,74 +400,132 @@ void readop(FILE* f) {
 		case 'q':
 			op.op = OP_EXIT;
 			break;
+		case 'F':
+		default:
+			op.op = OP_PSHT;
+			operand psht = operand_mpfr_init();
+			char* frstr = (char*)malloc(256);
+			fscanf(f, "%255[^;]", frstr);
+			fgetc(f);
+			mpfr_strtofr(psht.tvalue, frstr, NULL, 0, MPFR_RNDN);
+			op.arg = psht;
+			break;
 	}
-	if (state.ip < SIZE) state.code[state.ip] = op;
+	if (state.wip < SIZE) state.code[state.wip] = op;
 	else exit(1);
-	state.ip++;
+	state.wip++;
 }
 
 void tonext(optype skipop, optype op) {
 	uint64_t skip = 0;
-	state.ip++;
-	while (state.code[state.ip].op != op || skip > 0) {
-		if (state.code[state.ip].op == skipop) skip += 1;
-		state.ip++;
+	state.rip++;
+	while (state.code[state.rip].op != op || skip > 0) {
+		if (state.code[state.rip].op == skipop) skip += 1;
+		state.rip++;
 	}
-	state.ip--;
+	state.rip--;
 }
 
 void parseop() {
-	operand result = operand_mpfr_init(), jloc;
-	switch (state.code[state.ip].op) {
+	operand result, jloc;
+	switch (state.code[state.rip].op) {
 		case OP_ADD:;
 			result = operand_mpfr_init();
-			mpfr_add(result.tvalue, pop(working_stack).tvalue, pop(working_stack).tvalue, MPFR_RNDN);
+			mpfr_add(result.tvalue, pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_SUB:;
-			operand sub1 = pop(working_stack);
-			operand sub2 = pop(working_stack);
+			result = operand_mpfr_init();
+			operand sub1 = pop_mpfrdefault(working_stack);
+			operand sub2 = pop_mpfrdefault(working_stack);
 			mpfr_sub(result.tvalue, sub2.tvalue, sub1.tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_MUL:;
-			mpfr_mul(result.tvalue, pop(working_stack).tvalue, pop(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpfr_init();
+			mpfr_mul(result.tvalue, pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_DIV:;
-			operand div1 = pop(working_stack);
-			operand div2 = pop(working_stack);
+			result = operand_mpfr_init();
+			operand div1 = pop_mpfrdefault(working_stack);
+			operand div2 = pop_mpfrdefault(working_stack);
 			mpfr_div(result.tvalue, div2.tvalue, div1.tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
+		case OP_IADD:;
+			result = (operand){.intvalue = pop(working_stack).intvalue + pop(working_stack).intvalue};
+			push(working_stack, result);
+			break;
+		case OP_ISUB:;
+			uint64_t isub1 = pop(working_stack).intvalue;
+			uint64_t isub2 = pop(working_stack).intvalue;
+			result = (operand){.intvalue = isub2 - isub1};
+			push(working_stack, result);
+			break;
+		case OP_IRSH:;
+			uint64_t irsh1 = pop(working_stack).intvalue;
+			uint64_t irsh2 = pop(working_stack).intvalue;
+			result = (operand){.intvalue = isub2 >> isub1};
+			push(working_stack, result);
+			break;
+		case OP_ILSH:;
+			uint64_t ilsh1 = pop(working_stack).intvalue;
+			uint64_t ilsh2 = pop(working_stack).intvalue;
+			result = (operand){.intvalue = isub2 << isub1};
+			push(working_stack, result);
+			break;
+		case OP_IINC:;
+			result = (operand){.intvalue = pop(working_stack).intvalue + 1};
+			push(working_stack, result);
+			break;
+		case OP_IDEC:;
+			result = (operand){.intvalue = pop(working_stack).intvalue - 1};
+			push(working_stack, result);
+			break;
+		case OP_IMUL:;
+			result = (operand){.intvalue = pop(working_stack).intvalue * pop(working_stack).intvalue};
+			push(working_stack, result);
+			break;
+		case OP_IDIV:;
+			uint64_t idiv1 = pop(working_stack).intvalue;
+			uint64_t idiv2 = pop(working_stack).intvalue;
+			result = (operand){.intvalue = idiv2 / idiv1};
+			push(working_stack, result);
+			break;
 		case OP_REM:;
-			uint64_t rem1 = pop(working_stack).intvalue;
-			uint64_t rem2 = pop(working_stack).intvalue;
+			uint64_t rem1 = pop_mpfrdefault(working_stack).intvalue;
+			uint64_t rem2 = pop_mpfrdefault(working_stack).intvalue;
 			result = (operand){.intvalue = rem2 % rem1};
 			push(working_stack, result);
 			break;
 		case OP_EXP:;
-			operand exp1 = pop(working_stack);
-			operand exp2 = pop(working_stack);
+			result = operand_mpfr_init();
+			operand exp1 = pop_mpfrdefault(working_stack);
+			operand exp2 = pop_mpfrdefault(working_stack);
 			mpfr_pow(result.tvalue, exp2.tvalue, exp1.tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_RT:;
-			operand rt1 = pop(working_stack);
+			result = operand_mpfr_init();
+			operand rt1 = pop_mpfrdefault(working_stack);
 			operand rt2 = pop(working_stack);
 			mpfr_rootn_ui(result.tvalue, rt2.tvalue, rt1.intvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_SIN:;
-			mpfr_sin(result.tvalue, pop(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpfr_init();
+			mpfr_sin(result.tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_COS:;
-			mpfr_cos(result.tvalue, pop(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpfr_init();
+			mpfr_cos(result.tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_TAN:;
-			mpfr_tan(result.tvalue, pop(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpfr_init();
+			mpfr_tan(result.tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_AND:;
@@ -457,13 +540,17 @@ void parseop() {
 			result = (operand){.intvalue = pop(working_stack).intvalue ^ pop(working_stack).intvalue};
 			push(working_stack, result);
 			break;
+		case OP_NOT:
+			result = (operand){.intvalue = ~pop(working_stack).intvalue};
+            		break;
 		case OP_PSHT:;
 		case OP_PSHI:;
 		case OP_PSHC:;
 		case OP_PSHSTR:;
-			push(working_stack, state.code[state.ip].arg);
+			push(working_stack, state.code[state.rip].arg);
 			break;
 		case OP_TGET:;
+			result = operand_mpfr_init();
 			char* frstr = (char*)malloc(256);
 			scanf("%255[^;]", frstr);
 			mpfr_strtofr(result.tvalue, frstr, NULL, 0, MPFR_RNDN);
@@ -475,7 +562,7 @@ void parseop() {
 			break;
 		case OP_CGET:;
 			if (fgetc(stdin) == '\'') result.charvalue = fgetc(stdin);
-			else if (fgetc(stdin) == 'x') scanf("%hhx", &(result.charvalue));
+			else if (fgetc(stdin) == 'x') scanf("%2hhx", &(result.charvalue));
 			push(working_stack, result);
 			break;
 		case OP_STRGET:;
@@ -484,27 +571,27 @@ void parseop() {
 			push(working_stack, result);
 			break;
 		case OP_TPRINT:;
-			mpfr_out_str(stdout, 10, 0, pop(working_stack).tvalue, MPFR_RNDN);
+			mpfr_out_str(stdout, 10, 0, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			break;
 		case OP_IPRINT:;
 			printf("%lx", pop(working_stack).intvalue);
 			break;
 		case OP_CPRINT:;
-			printf("%c", pop(working_stack).charvalue);
+			fputc(pop(working_stack).charvalue, stdout);
 			break;
 		case OP_STRPRINT:;
 			printf("%s", peek(working_stack).strvalue);
 			break;
 		case OP_TESTEQ:;
-			result = (operand){.intvalue = mpfr_cmp(pop(working_stack).tvalue, pop(working_stack).tvalue) == 0 ? 1 : 0};
+			result = (operand){.intvalue = mpfr_cmp(pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue) == 0 ? 1 : 0};
 			push(working_stack, result);
 			break;
 		case OP_TESTGT:;
-			result = (operand){.intvalue = mpfr_cmp(pop(working_stack).tvalue, pop(working_stack).tvalue) < 0 ? 1 : 0};
+			result = (operand){.intvalue = mpfr_cmp(pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue) < 0 ? 1 : 0};
 			push(working_stack, result);
 			break;
 		case OP_TESTLT:;
-			result = (operand){.intvalue = mpfr_cmp(pop(working_stack).tvalue, pop(working_stack).tvalue) > 0 ? 1 : 0};
+			result = (operand){.intvalue = mpfr_cmp(pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue) > 0 ? 1 : 0};
 			push(working_stack, result);
 			break;
 		case OP_IFBEGIN:;
@@ -513,40 +600,40 @@ void parseop() {
 			break;
 		case OP_LOOPBEGIN:;
 			if (!peek(working_stack).intvalue) tonext(OP_LOOPBEGIN, OP_LOOPEND);
-			jloc = (operand){.intvalue = state.ip};
+			jloc = (operand){.intvalue = state.rip - 1};
 			push(call_stack, jloc);
 			break;
 		case OP_LOOPEND:;
-			if (!peek(working_stack).intvalue) state.ip = pop(call_stack).intvalue;
+			if (peek(working_stack).intvalue) state.rip = pop(call_stack).intvalue;
 			break;
 		case OP_FDEFBEGIN:;
-			ht_set(functab, peek(working_stack).strvalue, state.ip);
+			ht_set(functab, peek(working_stack).strvalue, state.rip);
 			tonext(OP_FDEFBEGIN, OP_FDEFEND);
-			state.ip++;
+			state.rip++;
 			break;
 		case OP_FDEFEND:;
-			state.ip = pop(call_stack).intvalue;
+			state.rip = pop(call_stack).intvalue;
 			break;
 		case OP_FCALL:;
-			jloc = (operand){.intvalue = state.ip};
+			jloc = (operand){.intvalue = state.rip};
 			push(call_stack, jloc);
-			state.ip = ht_get(functab, peek(working_stack).strvalue);
+			state.rip = ht_get(functab, peek(working_stack).strvalue);
 			break;
 		case OP_LOAD:;
-			regs[state.code[state.ip].arg.regvalue] = pop(working_stack);
+			regs[state.code[state.rip].arg.regvalue] = pop_mpfrdefault(working_stack);
 			break;
 		case OP_STORE:;
-			push(working_stack, regs[state.code[state.ip].arg.regvalue]);
+			push(working_stack, regs[state.code[state.rip].arg.regvalue]);
 			break;
 		case OP_JMP:;
-			state.ip = pop(working_stack).intvalue;
+			state.rip = pop(working_stack).intvalue;
 			break;
 		case OP_PUSHIP:;
-			operand ip = (operand){.intvalue = state.ip};
-			push(working_stack, ip);
+			operand ip = (operand){.intvalue = state.rip};
+			push(working_stack, rip);
 			break;
 		case OP_DUP:;
-			push(working_stack, peek(working_stack));
+			push(working_stack, peek_mpfrdefault(working_stack));
 			break;
 		case OP_FREESTR:;
 			free(pop(working_stack).strvalue);
@@ -555,8 +642,8 @@ void parseop() {
 			fputc('\n', stdout);
 			exit(0);
 			break;
-	}
-	state.ip++;
+    }
+    state.rip++;
 }
 
 int main(int argc, char** argv) {
@@ -568,6 +655,5 @@ int main(int argc, char** argv) {
 	init(&call_stack);
 	functab = ht_create(0x10000);
 	while (!feof(f)) readop(f);
-	state.ip = 0;
 	while(1) parseop();	
 }
