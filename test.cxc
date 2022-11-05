@@ -1,1 +1,12 @@
-{<test>f,I[_Ided.ICx0A.C]q} :test;
+{<test> # Defines function 'test'
+	,I # Gets integer from stdin in base 16
+	[
+		_Ide
+		d
+		.I
+		Cx0A
+		.C
+	]
+	q
+}
+:test;

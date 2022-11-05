@@ -263,6 +263,7 @@ void readop(FILE* f) {
 	if (feof(f)) return;
 	operation op;
 	char opstr[4];
+	mul:
 	if (DEBUG) printf("'%c',", c);
 	switch(c) {
 		case '#':
@@ -289,10 +290,11 @@ void readop(FILE* f) {
 			op.op = OP_SUB;
 			break;
 		case '*':
-			if (fgetc(f) == '*') op.op = OP_EXP;
+			if ((c = fgetc(f)) == '*') op.op = OP_EXP;
 			else {
-				fseek(f, -1, SEEK_CUR);
 				op.op = OP_MUL;
+				commitop(op);
+				goto mul;
 			}
 			break;
 		case '/':
@@ -451,13 +453,15 @@ void readop(FILE* f) {
 		case ':':
 			op.op = OP_FCALL;
 			char* s2 = (char*)malloc(256);
-			fscanf(f, "%255[^; \t\n\r]", s);
+			fscanf(f, "%255[^; \t\n\r]", s2);
 			fgetc(f);
-			op.arg = (operand){.strvalue = s};
+			op.arg = (operand){.strvalue = s2};
 			break;
 		case 's':
 			op.op = OP_STORE;
-			op.arg.regvalue = (fgetc(f) << 8) & fgetc(f);
+			char u;
+			if ((u = fgetc(f)) == '\'')op.arg.regvalue = (fgetc(f) << 8) & fgetc(f);
+			else if (u == 'x');
 			break;
 		case 'j':
 			op.op = OP_JMP;
@@ -475,8 +479,8 @@ void readop(FILE* f) {
 		case 'q':
 			op.op = OP_EXIT;
 			break;
-		default:
-			if (strchr("0123456789ABCDEFabcdef.+-", c) == NULL) break;
+		/*default:
+			if (strchr("0123456789ABCDEFabcdef.+-", c) == NULL) break;*/
 		case 'F':
 			op.op = OP_PSHT;
 			operand psht = operand_mpfr_init();
@@ -709,7 +713,6 @@ void parseop() {
 			break;
 		case OP_FDEFBEGIN_STR:;
 			ht_set(functab, state.code[state.rip].arg.strvalue, state.rip);
-			free(state.code[state.rip].arg.strvalue);
 			tonext(OP_FDEFBEGIN, OP_FDEFBEGIN_STR, OP_FDEFEND);
 			state.rip++;
 			break;
@@ -718,9 +721,10 @@ void parseop() {
 			break;
 		case OP_FCALL:;
 			jloc = (operand){.intvalue = state.rip};
-			free(state.code[state.rip].arg.strvalue);
+			uint64_t rip_before = state.rip;
 			push(call_stack, jloc); // breaks
 			state.rip = ht_get(functab, state.code[state.rip].arg.strvalue);
+			free(state.code[rip_before].arg.strvalue);
 			break;
 		case OP_STORE:;
 			if (regs[state.code[state.rip].arg.regvalue].clear_mpfr == 0xFF) mpfr_clear(regs[state.code[state.rip].arg.regvalue].tvalue);
