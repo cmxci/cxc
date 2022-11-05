@@ -58,18 +58,24 @@ typedef enum {
 	OP_COS,
 	OP_TAN,
 	OP_RT,
+	OP_LOG,
 	OP_IFBEGIN,
 	OP_IFEND,
 	OP_LOOPBEGIN,
 	OP_LOOPEND,
 	OP_FDEFBEGIN,
+	OP_FDEFBEGIN_STR,
 	OP_FDEFEND,
 	OP_FCALL,
+	OP_PRECSET,
+	OP_DIGSET,
 	OP_JMP,
 	OP_PUSHIP,
 	OP_STORE,
 	OP_LOAD,
 	OP_DUP,
+	OP_DEFVAR,
+	OP_GETVAR,
 	OP_TESTEQ,
 	OP_TESTGT,
 	OP_TESTLT,
@@ -178,10 +184,12 @@ typedef struct {
 	unsigned long sp;
 } stack;
 
+uint16_t prec = 256, digits = 0;
+
 operand operand_mpfr_init() {
 	operand r;
 	r.clear_mpfr = 0xFF;
-	mpfr_init2(r.tvalue, 256);
+	mpfr_init2(r.tvalue, prec);
 	mpfr_set_d(r.tvalue, 0.0, MPFR_RNDN);
 	return r;
 }
@@ -232,7 +240,7 @@ operand peek_mpfrdefault(stack* s) {
 stack* working_stack;
 stack* call_stack;
 operand regs[0x10000];
-hashtable* functab;
+hashtable* functab, *vartab;
 
 struct {
 	operation code[SIZE];
@@ -240,6 +248,12 @@ struct {
 } state = {
 	.rip = 0, .wip = 0
 };
+
+void commitop(operation op) {
+	if (state.wip < SIZE) state.code[state.wip] = op;
+	else exit(1);
+	state.wip++;
+}
 
 void readop(FILE* f) {
 	char c = fgetc(f);
@@ -251,6 +265,23 @@ void readop(FILE* f) {
 	char opstr[4];
 	if (DEBUG) printf("'%c',", c);
 	switch(c) {
+		case '#':
+			while (fgetc(f) != '\n');
+			break;
+		case '@':
+			op.op = OP_DEFVAR;
+			char* s = (char*)malloc(256);
+			fscanf(f, "%255[^; \t\n\r]", s);
+			fgetc(f);
+			op.arg = (operand){.strvalue = s};
+			break;
+		case '$':
+			op.op = OP_GETVAR;
+			char* s1 = (char*)malloc(256);
+			fscanf(f, "%255[^; \t\n\r]", s);
+			fgetc(f);
+			op.arg = (operand){.strvalue = s};
+			break;
 		case '+':
 			op.op = OP_ADD;
 			break;
@@ -281,6 +312,9 @@ void readop(FILE* f) {
 			break;
 		case 'R':
 			op.op = OP_RT;
+			break;
+		case 'L':
+			op.op = OP_LOG;
 			break;
 		case '.':
 			switch(fgetc(f)) {
@@ -317,18 +351,24 @@ void readop(FILE* f) {
 		case 'f':
 			op.op = OP_FREESTR;
 			break;
+		case 'k':
+			op.op = OP_PRECSET;
+			break;
+		case 'K':
+			op.op = OP_DIGSET;
+			break;
 		case 'I':
 			op.op = OP_PSHI;
 			fscanf(f, "%lx", &(op.arg.intvalue));
 			break;
 		case 'C':
 			op.op = OP_PSHC;
-			if (fgetc(f) == '\'') {
+			char t = 0;
+			if ((t = fgetc(f)) == '\'') {
 				op.arg.charvalue = fgetc(f);
 				break;
 			}
-			else if (fgetc(f) == 'x') scanf("%2hhx", &(op.arg.charvalue));
-			fgetc(f);
+			else if (t == 'x') fscanf(f, "%2hhx", &(op.arg.charvalue));
 			break;
 		case '"':
 			op.op = OP_PSHSTR;
@@ -349,6 +389,29 @@ void readop(FILE* f) {
 			if (!strcmp(opstr, "Ide")) op.op = OP_IDEC;
 			if (!strcmp(opstr, "Iml")) op.op = OP_IMUL;
 			if (!strcmp(opstr, "Idv")) op.op = OP_IDIV;
+			if (!strcmp(opstr, "Fld")) {
+				char* prepend = "~/cxc/include/";
+				char* s = (char*)malloc(256 + strlen(prepend));
+				char t = fgetc(f);
+				if (t == '<') {
+					fscanf(f, "%255[^>]", s);
+					fgetc(f);
+					memmove(s + strlen(prepend), s, strlen(s) + 1);
+					memcpy(s, prepend, strlen(prepend));
+					FILE* g = fopen(s, "r");
+					fgetc(g);
+					fseek(g, 0, SEEK_SET);
+					while (!feof(g)) readop(g);
+				}
+				else if (t == '"') {
+					fscanf(f, "%255[^\"]", s);
+					fgetc(f);
+					FILE* g = fopen(s, "r");
+					fgetc(g);
+					fseek(g, 0, SEEK_SET);
+					while (!feof(g)) readop(g);
+				}
+			}
 			break;
 		case '=':
 			op.op = OP_TESTEQ;
@@ -372,6 +435,14 @@ void readop(FILE* f) {
 			op.op = OP_LOOPEND;
 			break;
 		case '{':
+			if (fgetc(f) == '<') {
+				op.op = op.op = OP_FDEFBEGIN_STR;
+				char* s = (char*)malloc(256);
+				fscanf(f, "%255[^> \t\n\r]", s);
+				fgetc(f);
+				op.arg = (operand){.strvalue = s};
+				break;
+			}
 			op.op = OP_FDEFBEGIN;
 			break;
 		case '}':
@@ -379,6 +450,10 @@ void readop(FILE* f) {
 			break;
 		case ':':
 			op.op = OP_FCALL;
+			char* s2 = (char*)malloc(256);
+			fscanf(f, "%255[^; \t\n\r]", s);
+			fgetc(f);
+			op.arg = (operand){.strvalue = s};
 			break;
 		case 's':
 			op.op = OP_STORE;
@@ -387,7 +462,7 @@ void readop(FILE* f) {
 		case 'j':
 			op.op = OP_JMP;
 			break;
-		case '$':
+		case '?':
 			op.op = OP_PUSHIP;
 			break;
 		case 'l':
@@ -400,27 +475,26 @@ void readop(FILE* f) {
 		case 'q':
 			op.op = OP_EXIT;
 			break;
-		case 'F':
 		default:
+			if (strchr("0123456789ABCDEFabcdef.+-", c) == NULL) break;
+		case 'F':
 			op.op = OP_PSHT;
 			operand psht = operand_mpfr_init();
 			char* frstr = (char*)malloc(256);
-			fscanf(f, "%255[^;]", frstr);
+			fscanf(f, "%255[^; \t\n\r]", frstr);
 			fgetc(f);
 			mpfr_strtofr(psht.tvalue, frstr, NULL, 0, MPFR_RNDN);
 			op.arg = psht;
 			break;
 	}
-	if (state.wip < SIZE) state.code[state.wip] = op;
-	else exit(1);
-	state.wip++;
+	commitop(op);
 }
 
-void tonext(optype skipop, optype op) {
+void tonext(optype skipop1, optype skipop2, optype op) {
 	uint64_t skip = 0;
 	state.rip++;
 	while (state.code[state.rip].op != op || skip > 0) {
-		if (state.code[state.rip].op == skipop) skip += 1;
+		if (state.code[state.rip].op == skipop1 || state.code[state.rip].op == skipop2) skip += 1;
 		state.rip++;
 	}
 	state.rip--;
@@ -513,6 +587,18 @@ void parseop() {
 			mpfr_rootn_ui(result.tvalue, rt2.tvalue, rt1.intvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
+		case OP_LOG:;
+			result = operand_mpfr_init();
+			operand log1 = pop_mpfrdefault(working_stack);
+			operand log2 = pop_mpfrdefault(working_stack);
+			operand tmp1 = operand_mpfr_init(), tmp2 = operand_mpfr_init();
+			/* Calculate log base b with respect to the natural logarithm */
+			mpfr_log(tmp1.tvalue, rt2.tvalue, MPFR_RNDN);
+			mpfr_log(tmp2.tvalue, rt1.tvalue, MPFR_RNDN);
+			mpfr_div(result.tvalue, tmp1.tvalue, tmp2.tvalue, MPFR_RNDN);
+			mpfr_clears(tmp1.tvalue, tmp2.tvalue, (mpfr_ptr)NULL);
+			push(working_stack, result);
+			break;
 		case OP_SIN:;
 			result = operand_mpfr_init();
 			mpfr_sin(result.tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
@@ -543,6 +629,12 @@ void parseop() {
 		case OP_NOT:
 			result = (operand){.intvalue = ~pop(working_stack).intvalue};
             		break;
+		case OP_PRECSET:
+			prec = pop(working_stack).intvalue % 0x10000;
+			break;
+		case OP_DIGSET:
+			digits = pop(working_stack).intvalue % 0x10000;
+			break;
 		case OP_PSHT:;
 		case OP_PSHI:;
 		case OP_PSHC:;
@@ -561,8 +653,12 @@ void parseop() {
 			push(working_stack, result);
 			break;
 		case OP_CGET:;
-			if (fgetc(stdin) == '\'') result.charvalue = fgetc(stdin);
-			else if (fgetc(stdin) == 'x') scanf("%2hhx", &(result.charvalue));
+			char t = 0;
+			if ((t = fgetc(stdin)) == '\'') {
+				result.charvalue = fgetc(stdin);
+				break;
+			}
+			else if (t == 'x') scanf("%2hhx", &(result.charvalue));
 			push(working_stack, result);
 			break;
 		case OP_STRGET:;
@@ -571,7 +667,7 @@ void parseop() {
 			push(working_stack, result);
 			break;
 		case OP_TPRINT:;
-			mpfr_out_str(stdout, 10, 0, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			mpfr_out_str(stdout, 10, digits, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			break;
 		case OP_IPRINT:;
 			printf("%lx", pop(working_stack).intvalue);
@@ -595,11 +691,11 @@ void parseop() {
 			push(working_stack, result);
 			break;
 		case OP_IFBEGIN:;
-			if (!pop(working_stack).intvalue) tonext(OP_IFBEGIN, OP_IFEND);
+			if (!pop(working_stack).intvalue) tonext(OP_IFBEGIN, OP_IFBEGIN, OP_IFEND);
 		case OP_IFEND:;
 			break;
 		case OP_LOOPBEGIN:;
-			if (!peek(working_stack).intvalue) tonext(OP_LOOPBEGIN, OP_LOOPEND);
+			if (!peek(working_stack).intvalue) tonext(OP_LOOPBEGIN, OP_LOOPBEGIN, OP_LOOPEND);
 			jloc = (operand){.intvalue = state.rip - 1};
 			push(call_stack, jloc);
 			break;
@@ -608,7 +704,13 @@ void parseop() {
 			break;
 		case OP_FDEFBEGIN:;
 			ht_set(functab, peek(working_stack).strvalue, state.rip);
-			tonext(OP_FDEFBEGIN, OP_FDEFEND);
+			tonext(OP_FDEFBEGIN, OP_FDEFBEGIN_STR, OP_FDEFEND);
+			state.rip++;
+			break;
+		case OP_FDEFBEGIN_STR:;
+			ht_set(functab, state.code[state.rip].arg.strvalue, state.rip);
+			free(state.code[state.rip].arg.strvalue);
+			tonext(OP_FDEFBEGIN, OP_FDEFBEGIN_STR, OP_FDEFEND);
 			state.rip++;
 			break;
 		case OP_FDEFEND:;
@@ -616,24 +718,46 @@ void parseop() {
 			break;
 		case OP_FCALL:;
 			jloc = (operand){.intvalue = state.rip};
-			push(call_stack, jloc);
-			state.rip = ht_get(functab, peek(working_stack).strvalue);
-			break;
-		case OP_LOAD:;
-			regs[state.code[state.rip].arg.regvalue] = pop_mpfrdefault(working_stack);
+			free(state.code[state.rip].arg.strvalue);
+			push(call_stack, jloc); // breaks
+			state.rip = ht_get(functab, state.code[state.rip].arg.strvalue);
 			break;
 		case OP_STORE:;
-			push(working_stack, regs[state.code[state.rip].arg.regvalue]);
+			if (regs[state.code[state.rip].arg.regvalue].clear_mpfr == 0xFF) mpfr_clear(regs[state.code[state.rip].arg.regvalue].tvalue);
+			operand t0 = pop_mpfrdefault(working_stack);
+			regs[state.code[state.rip].arg.regvalue] = t0;
+			if (t0.clear_mpfr == 0xFF) mpfr_init_set(regs[state.code[state.rip].arg.regvalue].tvalue, t0.tvalue, MPFR_RNDN);
+			break;
+		case OP_LOAD:;
+			operand t1 = regs[state.code[state.rip].arg.regvalue];
+			if (t1.clear_mpfr == 0xFF) mpfr_init_set(t1.tvalue, regs[state.code[state.rip].arg.regvalue].tvalue, MPFR_RNDN);
+			push(working_stack, t1);
 			break;
 		case OP_JMP:;
 			state.rip = pop(working_stack).intvalue;
 			break;
 		case OP_PUSHIP:;
 			operand ip = (operand){.intvalue = state.rip};
-			push(working_stack, rip);
+			push(working_stack, ip);
 			break;
 		case OP_DUP:;
 			push(working_stack, peek_mpfrdefault(working_stack));
+			break;
+		case OP_DEFVAR:;
+			if (ht_get(vartab, state.code[state.rip].arg.strvalue) != 0) free((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
+			if (((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->clear_mpfr == 0xFF) mpfr_clear(((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->tvalue);
+			operand* x = malloc(sizeof(operand));
+			operand y = pop(working_stack);
+			memcpy(x, &y, sizeof(operand));
+			if (x->clear_mpfr == 0xFF) mpfr_init_set(x->tvalue, y.tvalue, MPFR_RNDN);
+			ht_set(vartab, state.code[state.rip].arg.strvalue, (uint64_t)x); // Hacks
+			free(state.code[state.rip].arg.strvalue);
+			break;
+		case OP_GETVAR:;
+			operand* z = (operand*)ht_get(vartab, state.code[state.rip].arg.strvalue);
+			operand a = *z;
+			if (z->clear_mpfr == 0xFF) mpfr_init_set(a.tvalue, z->tvalue, MPFR_RNDN);
+			push(working_stack, a);
 			break;
 		case OP_FREESTR:;
 			free(pop(working_stack).strvalue);
@@ -653,6 +777,7 @@ int main(int argc, char** argv) {
 	else f = fopen(argv[1], "r");
 	init(&working_stack);
 	init(&call_stack);
+	functab = ht_create(0x10000);
 	functab = ht_create(0x10000);
 	while (!feof(f)) readop(f);
 	while(1) parseop();	
