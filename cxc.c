@@ -9,7 +9,7 @@
 #include <mpfr.h>
 
 #define SIZE 0x100000
-#define DEBUG 1
+#define DEBUG 0
 
 typedef struct {
 	union {
@@ -70,6 +70,7 @@ typedef enum {
 	OP_PRECSET,
 	OP_DIGSET,
 	OP_JMP,
+	OP_RET,
 	OP_PUSHIP,
 	OP_STORE,
 	OP_LOAD,
@@ -79,7 +80,7 @@ typedef enum {
 	OP_TESTEQ,
 	OP_TESTGT,
 	OP_TESTLT,
-	OP_EXIT
+	OP_EXIT = 0
 } optype;
 
 typedef struct {
@@ -268,7 +269,7 @@ void readop(FILE* f) {
 	switch(c) {
 		case '#':
 			while (fgetc(f) != '\n');
-			break;
+			goto do_not_commit;
 		case '@':
 			op.op = OP_DEFVAR;
 			char* s = (char*)malloc(256);
@@ -450,6 +451,9 @@ void readop(FILE* f) {
 		case '}':
 			op.op = OP_FDEFEND;
 			break;
+		case 'r':
+			op.op = OP_RET;
+			break;
 		case ':':
 			op.op = OP_FCALL;
 			char* s2 = (char*)malloc(256);
@@ -492,6 +496,7 @@ void readop(FILE* f) {
 			break;
 	}
 	commitop(op);
+	do_not_commit:
 }
 
 void tonext(optype skipop1, optype skipop2, optype op) {
@@ -722,7 +727,7 @@ void parseop() {
 		case OP_FCALL:;
 			jloc = (operand){.intvalue = state.rip};
 			uint64_t rip_before = state.rip;
-			push(call_stack, jloc); // breaks
+			push(call_stack, jloc);
 			state.rip = ht_get(functab, state.code[state.rip].arg.strvalue);
 			free(state.code[rip_before].arg.strvalue);
 			break;
@@ -739,6 +744,9 @@ void parseop() {
 			break;
 		case OP_JMP:;
 			state.rip = pop(working_stack).intvalue;
+			break;
+		case OP_RET:;
+			state.rip = pop(call_stack).intvalue;
 			break;
 		case OP_PUSHIP:;
 			operand ip = (operand){.intvalue = state.rip};
@@ -781,8 +789,9 @@ int main(int argc, char** argv) {
 	else f = fopen(argv[1], "r");
 	init(&working_stack);
 	init(&call_stack);
-	functab = ht_create(0x10000);
+	functab = ht_create(0x1000);
 	functab = ht_create(0x10000);
 	while (!feof(f)) readop(f);
+	fflush(stdout);
 	while(1) parseop();	
 }

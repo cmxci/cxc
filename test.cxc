@@ -1,12 +1,12 @@
-{<test> # Defines function 'test'
-	,I # Gets integer from stdin in base 16
-	[
-		_Ide
-		d
-		.I
-		Cx0A
-		.C
-	]
-	q
-}
-:test;
+{<test>			# Defines function 'test'
+	,I		# Gets integer from stdin in base 16
+	[		# Begin loop - jump to end if the top of the stack is 0 (does not work with floating point, use integers and comparisons)
+		_Ide	# Decrements the integer at the top of the stack
+		d	# Duplicates the top of the stack
+		.I	# Pops the top of the stack and prints it as an integer
+		Cx0A	# Pushes 0x0A (newline) to the stack
+		.C	# Pops the top of the stack and prints it as a character
+	]		# End loop - jump to beginning if the top of the stack is not 0
+	q		# Ends the program
+}			# Ends the function definition of 'test'
+:test;			# Calls function 'test'
