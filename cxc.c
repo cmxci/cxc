@@ -68,7 +68,7 @@ typedef enum {
 	OP_FDEFEND,
 	OP_FCALL,
 	OP_PRECSET,
-	OP_DIGSET,
+	OP_FMTSET,
 	OP_JMP,
 	OP_RET,
 	OP_PUSHIP,
@@ -185,7 +185,8 @@ typedef struct {
 	unsigned long sp;
 } stack;
 
-uint16_t prec = 256, digits = 0;
+uint16_t prec = 256;
+char* outfmt = "%.RNG";
 
 operand operand_mpfr_init() {
 	operand r;
@@ -196,7 +197,12 @@ operand operand_mpfr_init() {
 }
 
 void push(stack* s, operand i) {
-	if (s->data[(s->sp) + 1].clear_mpfr == 0xFF) mpfr_clear(s->data[(s->sp) + 1].tvalue);
+	if (s->data[(s->sp)].clear_mpfr == 0xFF && i.tvalue[0]._mpfr_d != s->data[s->sp].tvalue[0]._mpfr_d) {
+		printf("[%d %llx %llx]\n", s->sp, s->data[s->sp].tvalue[0]._mpfr_d, i.tvalue[0]._mpfr_d);
+		mpfr_clear(s->data[(s->sp)].tvalue);
+		s->data[(s->sp)].clear_mpfr = 0x0;
+		s->data[s->sp].tvalue[0]._mpfr_d = NULL;
+	}
 	if ((s->sp) < SIZE) {
 		s->data[s->sp] = i;
 		(s->sp)++;
@@ -358,7 +364,7 @@ void readop(FILE* f) {
 			op.op = OP_PRECSET;
 			break;
 		case 'K':
-			op.op = OP_DIGSET;
+			op.op = OP_FMTSET;
 			break;
 		case 'I':
 			op.op = OP_PSHI;
@@ -464,8 +470,8 @@ void readop(FILE* f) {
 		case 's':
 			op.op = OP_STORE;
 			char u;
-			if ((u = fgetc(f)) == '\'')op.arg.regvalue = (fgetc(f) << 8) & fgetc(f);
-			else if (u == 'x');
+			if ((u = fgetc(f)) == '\'') op.arg.regvalue = (fgetc(f) << 8) | fgetc(f);
+			else if (u == 'x') fscanf(f, "%4hx", &(op.arg.regvalue));
 			break;
 		case 'j':
 			op.op = OP_JMP;
@@ -475,7 +481,9 @@ void readop(FILE* f) {
 			break;
 		case 'l':
 			op.op = OP_LOAD;
-			op.arg.regvalue = (fgetc(f) << 8) & fgetc(f);
+			char v;
+			if ((u = fgetc(f)) == '\'') op.arg.regvalue = ((uint16_t)fgetc(f) << 8) | fgetc(f);
+			else if (u == 'x') fscanf(f, "%4hx", &(op.arg.regvalue));
 			break;
 		case 'd':
 			op.op = OP_DUP;
@@ -496,7 +504,7 @@ void readop(FILE* f) {
 			break;
 	}
 	commitop(op);
-	do_not_commit:
+	do_not_commit:;
 }
 
 void tonext(optype skipop1, optype skipop2, optype op) {
@@ -511,6 +519,8 @@ void tonext(optype skipop1, optype skipop2, optype op) {
 
 void parseop() {
 	operand result, jloc;
+	memset(&result, sizeof(operand), 1);
+	memset(&jloc, sizeof(operand), 1);
 	switch (state.code[state.rip].op) {
 		case OP_ADD:;
 			result = operand_mpfr_init();
@@ -641,10 +651,13 @@ void parseop() {
 		case OP_PRECSET:
 			prec = pop(working_stack).intvalue % 0x10000;
 			break;
-		case OP_DIGSET:
-			digits = pop(working_stack).intvalue % 0x10000;
+		case OP_FMTSET:
+			outfmt = strdup(pop(working_stack).strvalue);
 			break;
 		case OP_PSHT:;
+			mpfr_set(result.tvalue, state.code[state.rip].arg.tvalue, MPFR_RNDN);
+			push(working_stack, result);
+			break;
 		case OP_PSHI:;
 		case OP_PSHC:;
 		case OP_PSHSTR:;
@@ -652,9 +665,9 @@ void parseop() {
 			break;
 		case OP_TGET:;
 			result = operand_mpfr_init();
-			char* frstr = (char*)malloc(256);
-			scanf("%255[^;]", frstr);
-			mpfr_strtofr(result.tvalue, frstr, NULL, 0, MPFR_RNDN);
+			// char* frstr = (char*)malloc(256);
+			// scanf("%s[^; \n\r\t]", frstr);
+			mpfr_inp_str(result.tvalue, stdin, 0, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_IGET:;
@@ -676,7 +689,7 @@ void parseop() {
 			push(working_stack, result);
 			break;
 		case OP_TPRINT:;
-			mpfr_out_str(stdout, 10, digits, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			mpfr_fprintf(stdout, outfmt, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
 			break;
 		case OP_IPRINT:;
 			printf("%lx", pop(working_stack).intvalue);
@@ -734,8 +747,8 @@ void parseop() {
 		case OP_STORE:;
 			if (regs[state.code[state.rip].arg.regvalue].clear_mpfr == 0xFF) mpfr_clear(regs[state.code[state.rip].arg.regvalue].tvalue);
 			operand t0 = pop_mpfrdefault(working_stack);
-			regs[state.code[state.rip].arg.regvalue] = t0;
 			if (t0.clear_mpfr == 0xFF) mpfr_init_set(regs[state.code[state.rip].arg.regvalue].tvalue, t0.tvalue, MPFR_RNDN);
+			else regs[state.code[state.rip].arg.regvalue] = t0;
 			break;
 		case OP_LOAD:;
 			operand t1 = regs[state.code[state.rip].arg.regvalue];
@@ -773,6 +786,7 @@ void parseop() {
 			break;
 		case OP_FREESTR:;
 			free(pop(working_stack).strvalue);
+			working_stack->data[(working_stack->sp) + 1].strvalue = NULL;
 			break;
 		case OP_EXIT:;
 			fputc('\n', stdout);
