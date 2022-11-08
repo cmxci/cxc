@@ -20,7 +20,7 @@ typedef struct {
 		uint16_t regvalue;
 		char* strvalue;
 	};
-	unsigned char clear_mpc;
+	unsigned char is_mpc;
 } operand;
 
 typedef enum {
@@ -191,17 +191,17 @@ char* outfmt = "%.RNG";
 
 operand operand_mpc_init() {
 	operand r;
-	r.clear_mpc = 0xFF;
+	r.is_mpc = 0xFF;
 	mpc_init2(r.tvalue, prec);
 	mpc_set_d(r.tvalue, 0.0, MPC_RNDNN);
 	return r;
 }
 
 void push(stack* s, operand i) {
-	if (s->data[(s->sp)].clear_mpc == 0xFF /*&& i.tvalue[0]._mpc_d != s->data[s->sp].tvalue[0]._mpc_d*/) {
-		// printf("[%d %llx %llx]\n", s->sp, s->data[s->sp].tvalue[0]._mpc_d, i.tvalue[0]._mpc_d);
+	if (s->data[(s->sp)].is_mpc == 0xFF /*&& i.tvalue[0]._mpc_d != s->data[s->sp].tvalue[0]._mpc_d*/) {
+		//printf("[freeing @%d %llx for %llx]\n", s->sp, (uint64_t)s->data[s->sp].tvalue[0].re[0]._mpfr_d % 0x10000, (uint64_t)i.tvalue[0].re[0]._mpfr_d % 0x10000);
 		mpc_clear(s->data[(s->sp)].tvalue);
-		s->data[(s->sp)].clear_mpc = 0x0;
+		s->data[(s->sp)].is_mpc = 0x0;
 		// s->data[s->sp].tvalue[0]._mpc_d = NULL;
 	}
 	if ((s->sp) < SIZE) {
@@ -271,6 +271,7 @@ void readop(FILE* f) {
 	}
 	if (feof(f)) return;
 	operation op;
+	memset(&op, 0, sizeof(operation));
 	char opstr[4];
 	if (DEBUG) printf("'%c',", c);
 	switch(c) {
@@ -706,11 +707,12 @@ void parseop() {
 			mpfr_init2(imag, prec);
 			mpc_real(real, x.tvalue, MPC_RNDNN);
 			mpc_imag(imag, x.tvalue, MPC_RNDNN);
-			if (mpfr_cmp_ui(imag, 0) > 0) {
+			if (mpfr_cmp_ui(imag, 0) != 0) {
 				mpfr_fprintf(stdout, outfmt, imag, MPFR_RNDN);
 				fputs( "i + ", stdout);
 			}
 			mpfr_fprintf(stdout, outfmt, real, MPFR_RNDN);
+			mpfr_clears(real, imag, (mpfr_ptr)NULL);
 			break;
 		case OP_IPRINT:;
 			printf("%lx", pop(working_stack).intvalue);
@@ -766,21 +768,23 @@ void parseop() {
 			free(state.code[rip_before].arg.strvalue);
 			break;
 		case OP_STORE:;
-			if (regs[state.code[state.rip].arg.regvalue].clear_mpc == 0xFF) mpc_clear(regs[state.code[state.rip].arg.regvalue].tvalue);
+			if (regs[state.code[state.rip].arg.regvalue].is_mpc == 0xFF) mpc_clear(regs[state.code[state.rip].arg.regvalue].tvalue);
 			operand t0 = pop_mpcdefault(working_stack);
-			if (t0.clear_mpc == 0xFF) {
-				mpc_init2(regs[state.code[state.rip].arg.regvalue].tvalue, prec);
+			if (t0.is_mpc == 0xFF) {
+				regs[state.code[state.rip].arg.regvalue] = operand_mpc_init();
 				mpc_set(regs[state.code[state.rip].arg.regvalue].tvalue, t0.tvalue, MPC_RNDNN);
+				// fprintf(stderr, "stored %llx to %llx\n", t0.tvalue[0].re[0]._mpfr_d, regs[state.code[state.rip].arg.regvalue].tvalue[0].re[0]._mpfr_d);
 			}
 			else regs[state.code[state.rip].arg.regvalue] = t0;
 			break;
 		case OP_LOAD:;
-			operand t1 = regs[state.code[state.rip].arg.regvalue];
-			if (t1.clear_mpc == 0xFF) {
-				mpc_init2(t1.tvalue, prec);
+			operand t1 = operand_mpc_init();
+			if (regs[state.code[state.rip].arg.regvalue].is_mpc == 0xFF) {
 				mpc_set(t1.tvalue, regs[state.code[state.rip].arg.regvalue].tvalue, MPC_RNDNN);
+				// fprintf(stderr, "loaded %llx to %llx, attempting to free %llx @ SP=%llx\n", regs[state.code[state.rip].arg.regvalue].tvalue[0].re[0]._mpfr_d, t1.tvalue[0].re[0]._mpfr_d, working_stack->data[working_stack->sp].tvalue[0].re[0]._mpfr_d, working_stack->sp);
+				push(working_stack, t1);
 			}
-			push(working_stack, t1);
+			else push(working_stack, regs[state.code[state.rip].arg.regvalue]);
 			break;
 		case OP_JMP:;
 			state.rip = pop(working_stack).intvalue;
@@ -793,7 +797,7 @@ void parseop() {
 			push(working_stack, ip);
 			break;
 		case OP_DUP:;
-			if (peek(working_stack).clear_mpc == 0xFF) {
+			if (peek(working_stack).is_mpc == 0xFF) {
 				result = operand_mpc_init();
 				mpc_set(result.tvalue, peek_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 				push(working_stack, result);
@@ -802,11 +806,11 @@ void parseop() {
 			break;
 		case OP_DEFVAR:;
 			if (ht_get(vartab, state.code[state.rip].arg.strvalue) != 0) free((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
-			if (((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->clear_mpc == 0xFF) mpc_clear(((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->tvalue);
+			if (((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->is_mpc == 0xFF) mpc_clear(((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->tvalue);
 			operand* b = malloc(sizeof(operand));
 			operand y = pop(working_stack);
 			memcpy(b, &y, sizeof(operand));
-			if (b->clear_mpc == 0xFF) {
+			if (b->is_mpc == 0xFF) {
 				mpc_init2(b->tvalue, prec);
 				mpc_set(b->tvalue, y.tvalue, MPC_RNDNN);
 			}
@@ -816,7 +820,7 @@ void parseop() {
 		case OP_GETVAR:;
 			operand* z = (operand*)ht_get(vartab, state.code[state.rip].arg.strvalue);
 			operand a = *z;
-			if (z->clear_mpc == 0xFF) {
+			if (z->is_mpc == 0xFF) {
 				mpc_init2(a.tvalue, prec);
 				mpc_set(a.tvalue, z->tvalue, MPC_RNDNN);
 			}
