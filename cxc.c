@@ -198,10 +198,10 @@ operand operand_mpfr_init() {
 
 void push(stack* s, operand i) {
 	if (s->data[(s->sp)].clear_mpfr == 0xFF && i.tvalue[0]._mpfr_d != s->data[s->sp].tvalue[0]._mpfr_d) {
-		printf("[%d %llx %llx]\n", s->sp, s->data[s->sp].tvalue[0]._mpfr_d, i.tvalue[0]._mpfr_d);
+		// printf("[%d %llx %llx]\n", s->sp, s->data[s->sp].tvalue[0]._mpfr_d, i.tvalue[0]._mpfr_d);
 		mpfr_clear(s->data[(s->sp)].tvalue);
 		s->data[(s->sp)].clear_mpfr = 0x0;
-		s->data[s->sp].tvalue[0]._mpfr_d = NULL;
+		// s->data[s->sp].tvalue[0]._mpfr_d = NULL;
 	}
 	if ((s->sp) < SIZE) {
 		s->data[s->sp] = i;
@@ -263,6 +263,7 @@ void commitop(operation op) {
 }
 
 void readop(FILE* f) {
+	mul:
 	char c = fgetc(f);
 	while (isspace(c)) {
 		c = fgetc(f);
@@ -270,7 +271,6 @@ void readop(FILE* f) {
 	if (feof(f)) return;
 	operation op;
 	char opstr[4];
-	mul:
 	if (DEBUG) printf("'%c',", c);
 	switch(c) {
 		case '#':
@@ -601,8 +601,8 @@ void parseop() {
 			break;
 		case OP_RT:;
 			result = operand_mpfr_init();
-			operand rt1 = pop_mpfrdefault(working_stack);
-			operand rt2 = pop(working_stack);
+			operand rt1 = pop(working_stack);
+			operand rt2 = pop_mpfrdefault(working_stack);
 			mpfr_rootn_ui(result.tvalue, rt2.tvalue, rt1.intvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
@@ -655,6 +655,7 @@ void parseop() {
 			outfmt = strdup(pop(working_stack).strvalue);
 			break;
 		case OP_PSHT:;
+			result = operand_mpfr_init();
 			mpfr_set(result.tvalue, state.code[state.rip].arg.tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
@@ -766,7 +767,12 @@ void parseop() {
 			push(working_stack, ip);
 			break;
 		case OP_DUP:;
-			push(working_stack, peek_mpfrdefault(working_stack));
+			if (peek(working_stack).clear_mpfr == 0xFF) {
+				result = operand_mpfr_init();
+				mpfr_set(result.tvalue, peek_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+				push(working_stack, result);
+			}
+			else push(working_stack, peek_mpfrdefault(working_stack));
 			break;
 		case OP_DEFVAR:;
 			if (ht_get(vartab, state.code[state.rip].arg.strvalue) != 0) free((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
