@@ -6,20 +6,21 @@
 #include <ctype.h>
 
 #include <gmp.h>
-#include <mpfr.h>
+#include <mpc.h>
+#include <mpc.h>
 
 #define SIZE 0x100000
 #define DEBUG 0
 
 typedef struct {
 	union {
-		mpfr_t tvalue;
+		mpc_t tvalue;
 		uint64_t intvalue;
 		char charvalue;
 		uint16_t regvalue;
 		char* strvalue;
 	};
-	unsigned char clear_mpfr;
+	unsigned char clear_mpc;
 } operand;
 
 typedef enum {
@@ -188,20 +189,20 @@ typedef struct {
 uint16_t prec = 256;
 char* outfmt = "%.RNG";
 
-operand operand_mpfr_init() {
+operand operand_mpc_init() {
 	operand r;
-	r.clear_mpfr = 0xFF;
-	mpfr_init2(r.tvalue, prec);
-	mpfr_set_d(r.tvalue, 0.0, MPFR_RNDN);
+	r.clear_mpc = 0xFF;
+	mpc_init2(r.tvalue, prec);
+	mpc_set_d(r.tvalue, 0.0, MPC_RNDNN);
 	return r;
 }
 
 void push(stack* s, operand i) {
-	if (s->data[(s->sp)].clear_mpfr == 0xFF && i.tvalue[0]._mpfr_d != s->data[s->sp].tvalue[0]._mpfr_d) {
-		// printf("[%d %llx %llx]\n", s->sp, s->data[s->sp].tvalue[0]._mpfr_d, i.tvalue[0]._mpfr_d);
-		mpfr_clear(s->data[(s->sp)].tvalue);
-		s->data[(s->sp)].clear_mpfr = 0x0;
-		// s->data[s->sp].tvalue[0]._mpfr_d = NULL;
+	if (s->data[(s->sp)].clear_mpc == 0xFF && i.tvalue[0]._mpc_d != s->data[s->sp].tvalue[0]._mpc_d) {
+		// printf("[%d %llx %llx]\n", s->sp, s->data[s->sp].tvalue[0]._mpc_d, i.tvalue[0]._mpc_d);
+		mpc_clear(s->data[(s->sp)].tvalue);
+		s->data[(s->sp)].clear_mpc = 0x0;
+		// s->data[s->sp].tvalue[0]._mpc_d = NULL;
 	}
 	if ((s->sp) < SIZE) {
 		s->data[s->sp] = i;
@@ -226,12 +227,12 @@ operand pop(stack* s) {
 	return (operand){.intvalue = 0};
 }
 
-operand pop_mpfrdefault(stack* s) {
+operand pop_mpcdefault(stack* s) {
 	if ((s->sp) > 0) {
 		(s->sp)--;
 		return s->data[(s->sp)];
 	}
-	return operand_mpfr_init();
+	return operand_mpc_init();
 }
 
 operand peek(stack* s) {
@@ -239,9 +240,9 @@ operand peek(stack* s) {
 	return (operand){.intvalue = 0};
 }
 
-operand peek_mpfrdefault(stack* s) {
+operand peek_mpcdefault(stack* s) {
 	if ((s->sp) > 0) return s->data[(s->sp) - 1];
-	return operand_mpfr_init();
+	return operand_mpc_init();
 }
 
 stack* working_stack;
@@ -495,11 +496,11 @@ void readop(FILE* f) {
 			if (strchr("0123456789ABCDEFabcdef.+-", c) == NULL) break;*/
 		case 'F':
 			op.op = OP_PSHT;
-			operand psht = operand_mpfr_init();
+			operand psht = operand_mpc_init();
 			char* frstr = (char*)malloc(256);
 			fscanf(f, "%255[^; \t\n\r]", frstr);
 			fgetc(f);
-			mpfr_strtofr(psht.tvalue, frstr, NULL, 0, MPFR_RNDN);
+			mpc_strtofr(psht.tvalue, frstr, NULL, 0, MPC_RNDNN);
 			op.arg = psht;
 			break;
 	}
@@ -523,27 +524,27 @@ void parseop() {
 	memset(&jloc, sizeof(operand), 1);
 	switch (state.code[state.rip].op) {
 		case OP_ADD:;
-			result = operand_mpfr_init();
-			mpfr_add(result.tvalue, pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			mpc_add(result.tvalue, pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_SUB:;
-			result = operand_mpfr_init();
-			operand sub1 = pop_mpfrdefault(working_stack);
-			operand sub2 = pop_mpfrdefault(working_stack);
-			mpfr_sub(result.tvalue, sub2.tvalue, sub1.tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			operand sub1 = pop_mpcdefault(working_stack);
+			operand sub2 = pop_mpcdefault(working_stack);
+			mpc_sub(result.tvalue, sub2.tvalue, sub1.tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_MUL:;
-			result = operand_mpfr_init();
-			mpfr_mul(result.tvalue, pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			mpc_mul(result.tvalue, pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_DIV:;
-			result = operand_mpfr_init();
-			operand div1 = pop_mpfrdefault(working_stack);
-			operand div2 = pop_mpfrdefault(working_stack);
-			mpfr_div(result.tvalue, div2.tvalue, div1.tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			operand div1 = pop_mpcdefault(working_stack);
+			operand div2 = pop_mpcdefault(working_stack);
+			mpc_div(result.tvalue, div2.tvalue, div1.tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_IADD:;
@@ -587,50 +588,50 @@ void parseop() {
 			push(working_stack, result);
 			break;
 		case OP_REM:;
-			uint64_t rem1 = pop_mpfrdefault(working_stack).intvalue;
-			uint64_t rem2 = pop_mpfrdefault(working_stack).intvalue;
+			uint64_t rem1 = pop_mpcdefault(working_stack).intvalue;
+			uint64_t rem2 = pop_mpcdefault(working_stack).intvalue;
 			result = (operand){.intvalue = rem2 % rem1};
 			push(working_stack, result);
 			break;
 		case OP_EXP:;
-			result = operand_mpfr_init();
-			operand exp1 = pop_mpfrdefault(working_stack);
-			operand exp2 = pop_mpfrdefault(working_stack);
-			mpfr_pow(result.tvalue, exp2.tvalue, exp1.tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			operand exp1 = pop_mpcdefault(working_stack);
+			operand exp2 = pop_mpcdefault(working_stack);
+			mpc_pow(result.tvalue, exp2.tvalue, exp1.tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_RT:;
-			result = operand_mpfr_init();
+			result = operand_mpc_init();
 			operand rt1 = pop(working_stack);
-			operand rt2 = pop_mpfrdefault(working_stack);
-			mpfr_rootn_ui(result.tvalue, rt2.tvalue, rt1.intvalue, MPFR_RNDN);
+			operand rt2 = pop_mpcdefault(working_stack);
+			mpc_rootn_ui(result.tvalue, rt2.tvalue, rt1.intvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_LOG:;
-			result = operand_mpfr_init();
-			operand log1 = pop_mpfrdefault(working_stack);
-			operand log2 = pop_mpfrdefault(working_stack);
-			operand tmp1 = operand_mpfr_init(), tmp2 = operand_mpfr_init();
+			result = operand_mpc_init();
+			operand log1 = pop_mpcdefault(working_stack);
+			operand log2 = pop_mpcdefault(working_stack);
+			operand tmp1 = operand_mpc_init(), tmp2 = operand_mpc_init();
 			/* Calculate log base b with respect to the natural logarithm */
-			mpfr_log(tmp1.tvalue, rt2.tvalue, MPFR_RNDN);
-			mpfr_log(tmp2.tvalue, rt1.tvalue, MPFR_RNDN);
-			mpfr_div(result.tvalue, tmp1.tvalue, tmp2.tvalue, MPFR_RNDN);
-			mpfr_clears(tmp1.tvalue, tmp2.tvalue, (mpfr_ptr)NULL);
+			mpc_log(tmp1.tvalue, rt2.tvalue, MPC_RNDNN);
+			mpc_log(tmp2.tvalue, rt1.tvalue, MPC_RNDNN);
+			mpc_div(result.tvalue, tmp1.tvalue, tmp2.tvalue, MPC_RNDNN);
+			mpc_clears(tmp1.tvalue, tmp2.tvalue, (mpc_ptr)NULL);
 			push(working_stack, result);
 			break;
 		case OP_SIN:;
-			result = operand_mpfr_init();
-			mpfr_sin(result.tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			mpc_sin(result.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_COS:;
-			result = operand_mpfr_init();
-			mpfr_cos(result.tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			mpc_cos(result.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_TAN:;
-			result = operand_mpfr_init();
-			mpfr_tan(result.tvalue, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			mpc_tan(result.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_AND:;
@@ -655,8 +656,8 @@ void parseop() {
 			outfmt = strdup(pop(working_stack).strvalue);
 			break;
 		case OP_PSHT:;
-			result = operand_mpfr_init();
-			mpfr_set(result.tvalue, state.code[state.rip].arg.tvalue, MPFR_RNDN);
+			result = operand_mpc_init();
+			mpc_set(result.tvalue, state.code[state.rip].arg.tvalue, MPFR_RNDN);
 			push(working_stack, result);
 			break;
 		case OP_PSHI:;
@@ -665,10 +666,10 @@ void parseop() {
 			push(working_stack, state.code[state.rip].arg);
 			break;
 		case OP_TGET:;
-			result = operand_mpfr_init();
+			result = operand_mpc_init();
 			// char* frstr = (char*)malloc(256);
 			// scanf("%s[^; \n\r\t]", frstr);
-			mpfr_inp_str(result.tvalue, stdin, 0, MPFR_RNDN);
+			mpc_inp_str(result.tvalue, stdin, 0, MPC_RNDNN);
 			push(working_stack, result);
 			break;
 		case OP_IGET:;
@@ -690,7 +691,7 @@ void parseop() {
 			push(working_stack, result);
 			break;
 		case OP_TPRINT:;
-			mpfr_fprintf(stdout, outfmt, pop_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			mpc_fprintf(stdout, outfmt, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 			break;
 		case OP_IPRINT:;
 			printf("%lx", pop(working_stack).intvalue);
@@ -702,15 +703,15 @@ void parseop() {
 			printf("%s", peek(working_stack).strvalue);
 			break;
 		case OP_TESTEQ:;
-			result = (operand){.intvalue = mpfr_cmp(pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue) == 0 ? 1 : 0};
+			result = (operand){.intvalue = mpc_cmp(pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue) == 0 ? 1 : 0};
 			push(working_stack, result);
 			break;
 		case OP_TESTGT:;
-			result = (operand){.intvalue = mpfr_cmp(pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue) < 0 ? 1 : 0};
+			result = (operand){.intvalue = mpc_cmp(pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue) < 0 ? 1 : 0};
 			push(working_stack, result);
 			break;
 		case OP_TESTLT:;
-			result = (operand){.intvalue = mpfr_cmp(pop_mpfrdefault(working_stack).tvalue, pop_mpfrdefault(working_stack).tvalue) > 0 ? 1 : 0};
+			result = (operand){.intvalue = mpc_cmp(pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue) > 0 ? 1 : 0};
 			push(working_stack, result);
 			break;
 		case OP_IFBEGIN:;
@@ -746,14 +747,14 @@ void parseop() {
 			free(state.code[rip_before].arg.strvalue);
 			break;
 		case OP_STORE:;
-			if (regs[state.code[state.rip].arg.regvalue].clear_mpfr == 0xFF) mpfr_clear(regs[state.code[state.rip].arg.regvalue].tvalue);
-			operand t0 = pop_mpfrdefault(working_stack);
-			if (t0.clear_mpfr == 0xFF) mpfr_init_set(regs[state.code[state.rip].arg.regvalue].tvalue, t0.tvalue, MPFR_RNDN);
+			if (regs[state.code[state.rip].arg.regvalue].clear_mpc == 0xFF) mpc_clear(regs[state.code[state.rip].arg.regvalue].tvalue);
+			operand t0 = pop_mpcdefault(working_stack);
+			if (t0.clear_mpc == 0xFF) mpc_init_set(regs[state.code[state.rip].arg.regvalue].tvalue, t0.tvalue, MPC_RNDNN);
 			else regs[state.code[state.rip].arg.regvalue] = t0;
 			break;
 		case OP_LOAD:;
 			operand t1 = regs[state.code[state.rip].arg.regvalue];
-			if (t1.clear_mpfr == 0xFF) mpfr_init_set(t1.tvalue, regs[state.code[state.rip].arg.regvalue].tvalue, MPFR_RNDN);
+			if (t1.clear_mpc == 0xFF) mpc_init_set(t1.tvalue, regs[state.code[state.rip].arg.regvalue].tvalue, MPC_RNDNN);
 			push(working_stack, t1);
 			break;
 		case OP_JMP:;
@@ -767,27 +768,27 @@ void parseop() {
 			push(working_stack, ip);
 			break;
 		case OP_DUP:;
-			if (peek(working_stack).clear_mpfr == 0xFF) {
-				result = operand_mpfr_init();
-				mpfr_set(result.tvalue, peek_mpfrdefault(working_stack).tvalue, MPFR_RNDN);
+			if (peek(working_stack).clear_mpc == 0xFF) {
+				result = operand_mpc_init();
+				mpc_set(result.tvalue, peek_mpcdefault(working_stack).tvalue, MPFR_RNDN);
 				push(working_stack, result);
 			}
-			else push(working_stack, peek_mpfrdefault(working_stack));
+			else push(working_stack, peek_mpcdefault(working_stack));
 			break;
 		case OP_DEFVAR:;
 			if (ht_get(vartab, state.code[state.rip].arg.strvalue) != 0) free((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
-			if (((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->clear_mpfr == 0xFF) mpfr_clear(((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->tvalue);
+			if (((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->clear_mpc == 0xFF) mpc_clear(((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->tvalue);
 			operand* x = malloc(sizeof(operand));
 			operand y = pop(working_stack);
 			memcpy(x, &y, sizeof(operand));
-			if (x->clear_mpfr == 0xFF) mpfr_init_set(x->tvalue, y.tvalue, MPFR_RNDN);
+			if (x->clear_mpc == 0xFF) mpc_init_set(x->tvalue, y.tvalue, MPC_RNDNN);
 			ht_set(vartab, state.code[state.rip].arg.strvalue, (uint64_t)x); // Hacks
 			free(state.code[state.rip].arg.strvalue);
 			break;
 		case OP_GETVAR:;
 			operand* z = (operand*)ht_get(vartab, state.code[state.rip].arg.strvalue);
 			operand a = *z;
-			if (z->clear_mpfr == 0xFF) mpfr_init_set(a.tvalue, z->tvalue, MPFR_RNDN);
+			if (z->clear_mpc == 0xFF) mpc_init_set(a.tvalue, z->tvalue, MPC_RNDNN);
 			push(working_stack, a);
 			break;
 		case OP_FREESTR:;
