@@ -6,7 +6,7 @@
 #include <ctype.h>
 
 #include <gmp.h>
-#include <mpc.h>
+#include <mpfr.h>
 #include <mpc.h>
 
 #define SIZE 0x100000
@@ -264,7 +264,7 @@ void commitop(operation op) {
 }
 
 void readop(FILE* f) {
-	mul:
+	mul:;
 	char c = fgetc(f);
 	while (isspace(c)) {
 		c = fgetc(f);
@@ -277,7 +277,7 @@ void readop(FILE* f) {
 	switch(c) {
 		case '#':
 			while (fgetc(f) != '\n');
-			goto do_not_commit;
+			return;
 		case '@':
 			op.op = OP_DEFVAR;
 			char* s = (char*)malloc(256);
@@ -506,7 +506,6 @@ void readop(FILE* f) {
 			break;
 	}
 	commitop(op);
-	do_not_commit:;
 }
 
 void tonext(optype skipop1, optype skipop2, optype op) {
@@ -657,6 +656,7 @@ void parseop() {
 			break;
 		case OP_NOT:
 			result = (operand){.intvalue = ~pop(working_stack).intvalue};
+			push(working_stack, result);
             		break;
 		case OP_PRECSET:
 			prec = pop(working_stack).intvalue % 0x10000;
@@ -671,8 +671,12 @@ void parseop() {
 			break;
 		case OP_PSHI:;
 		case OP_PSHC:;
-		case OP_PSHSTR:;
 			push(working_stack, state.code[state.rip].arg);
+			break;
+		case OP_PSHSTR:;
+			result.strvalue = strdup(state.code[state.rip].arg.strvalue);
+			result.is_mpc = 0x0; // ?
+			push(working_stack, result);
 			break;
 		case OP_TGET:;
 			result = operand_mpc_init();
@@ -805,8 +809,9 @@ void parseop() {
 			else push(working_stack, peek_mpcdefault(working_stack));
 			break;
 		case OP_DEFVAR:;
-			if (ht_get(vartab, state.code[state.rip].arg.strvalue) != 0) free((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
-			if (((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->is_mpc == 0xFF) mpc_clear(((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue))->tvalue);
+			// if (ht_get(vartab, state.code[state.rip].arg.strvalue) != 0) free((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
+			operand* c = ((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
+			if (c != NULL && c->is_mpc == 0xFF) mpc_clear(c->tvalue);
 			operand* b = malloc(sizeof(operand));
 			operand y = pop(working_stack);
 			memcpy(b, &y, sizeof(operand));
@@ -815,7 +820,6 @@ void parseop() {
 				mpc_set(b->tvalue, y.tvalue, MPC_RNDNN);
 			}
 			ht_set(vartab, state.code[state.rip].arg.strvalue, (uint64_t)b); // Hacks
-			free(state.code[state.rip].arg.strvalue);
 			break;
 		case OP_GETVAR:;
 			operand* z = (operand*)ht_get(vartab, state.code[state.rip].arg.strvalue);
@@ -846,7 +850,7 @@ int main(int argc, char** argv) {
 	init(&working_stack);
 	init(&call_stack);
 	functab = ht_create(0x1000);
-	functab = ht_create(0x10000);
+	vartab = ht_create(0x10000);
 	while (!feof(f)) readop(f);
 	fflush(stdout);
 	while(1) parseop();	

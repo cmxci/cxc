@@ -1,12 +1,15 @@
-"a=".Sf,Fs'qa			# Nothing on stack
-"b=".SfF0;,Fds'qb-s'nb		# Nothing on stack
-"c=".Sf,Fs'qc			# Nothing on stack
-l'qb F2; **			# b^2
-l'qc l'qa F4; * *		# b^2 4ac
--				# b^2-4ac
-I2 R s'rt			# Nothing on stack
-l'nb l'rt + s'x0		# Nothing on stack
-l'nb l'rt - s'x1		# Nothing on stack
-l'qa F2; * s'2a			# Nothing on stack
-l'x0 l'2a / "x = " .Sf .F	# Nothing on stack
-l'x1 l'2a / " or " .Sf .F	# Nothing on stack
+I1 [
+	"a = " .Sf ,F s'qa
+	"b = " .Sf F0; ,F d s'qb - s'-b
+	"c = " .Sf ,F s'qc
+	l'qb F2; **
+	l'qc l'qa F4; * *
+	-
+	I2 R s'rt
+	l'-b l'rt + s'x0
+	l'-b l'rt - s'x1
+	l'qa F2; * s'2a
+	l'x0 l'2a / "x = " .Sf .F
+	l'x1 l'2a / " or " .Sf .F
+	Cx0A .C
+]
