@@ -1,0 +1,34 @@
+F-1; F-3; I2 R + F2; / @xi;
+
+{<C>
+	l'd1
+	l'd1 F2; **
+	F4; 
+	l'd0 F3; ** 
+	* 
+	- 
+	I2 R 
+	l'+- F0; > (p + .Fq)
+	l'+- F0; < (p -)
+	F2; /
+	I3 R
+	d.Fq
+	s'rC
+}
+
+"a = " .Sf ,F s'ca
+"b = " .Sf ,F s'cb
+"c = " .Sf ,F s'cc
+"d = " .Sf ,F s'cd
+l'cb F2; ** F3; l'ca l'cc * * - s'd0						# d0 = b^2 - 3ac
+F2; l'cb F3; ** * F9; l'ca l'cb l'cc * * * - F27; l'ca F2; ** l'cd * * + s'd1	# d1 = 2b^3 - 9abc + 27(a^2)d
+F1; s'+- :C;									# Call C with +- as 1 (+)
+l'rC F0; = (p F-1; s'+- :C;)
+l'rC F0; = (p F1; s'rC)
+F-1; F3; l'ca * /
+l'cb
+{<f> d $xi; S ** l'rC d s'xk * l'd0 l'xk / * .F Cx0A.C}
+F0; :f;
+F1; :f;
+F2; :f;
+q

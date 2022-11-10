@@ -76,6 +76,8 @@ typedef enum {
 	OP_STORE,
 	OP_LOAD,
 	OP_DUP,
+	OP_POP,
+	OP_SWAP,
 	OP_DEFVAR,
 	OP_GETVAR,
 	OP_TESTEQ,
@@ -490,6 +492,12 @@ void readop(FILE* f) {
 		case 'd':
 			op.op = OP_DUP;
 			break;
+		case 'p':
+			op.op = OP_POP;
+			break;
+		case 'S':
+			op.op = OP_SWAP;
+			break;
 		case 'q':
 			op.op = OP_EXIT;
 			break;
@@ -808,6 +816,24 @@ void parseop() {
 			}
 			else push(working_stack, peek_mpcdefault(working_stack));
 			break;
+		case OP_POP:;
+			pop(working_stack);
+			break;
+		case OP_SWAP:;
+			operand swap1, swap2;
+			if (peek(working_stack).is_mpc == 0xFF) {
+				swap1 = operand_mpc_init();
+				swap2 = operand_mpc_init();
+				mpc_set(swap1.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
+				mpc_set(swap1.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
+			}
+			else {
+				swap1 = pop(working_stack);
+				swap2 = pop(working_stack);
+			}
+			push(working_stack, swap1);
+			push(working_stack, swap2);
+			break;
 		case OP_DEFVAR:;
 			// if (ht_get(vartab, state.code[state.rip].arg.strvalue) != 0) free((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
 			operand* c = ((operand*)ht_get(vartab, state.code[state.rip].arg.strvalue));
@@ -835,7 +861,7 @@ void parseop() {
 			working_stack->data[(working_stack->sp) + 1].strvalue = NULL;
 			break;
 		case OP_EXIT:;
-			fputc('\n', stdout);
+			fprintf(stdout, "\nEXITING [%lu]\n", state.rip);
 			exit(0);
 			break;
     }

@@ -1,4 +1,4 @@
-I1 [
+# I1 [
 	"a = " .Sf ,F s'qa
 	"b = " .Sf F0; ,F d s'qb - s'-b
 	"c = " .Sf ,F s'qc
@@ -12,4 +12,4 @@ I1 [
 	l'x0 l'2a / "x = " .Sf .F
 	l'x1 l'2a / " or " .Sf .F
 	Cx0A .C
-]
+# ]
