@@ -1,3 +1,5 @@
+I1481k
+
 F-1; F-3; I2 R + F2; / @xi;
 
 {<C>
@@ -8,11 +10,10 @@ F-1; F-3; I2 R + F2; / @xi;
 	* 
 	- 
 	I2 R 
-	l'+- F0; > (p + .Fq)
-	l'+- F0; < (p -)
+	l'+- F0; > (+)
+	l'+- F0; < (-)
 	F2; /
 	I3 R
-	d.Fq
 	s'rC
 }
 
@@ -22,13 +23,12 @@ F-1; F-3; I2 R + F2; / @xi;
 "d = " .Sf ,F s'cd
 l'cb F2; ** F3; l'ca l'cc * * - s'd0						# d0 = b^2 - 3ac
 F2; l'cb F3; ** * F9; l'ca l'cb l'cc * * * - F27; l'ca F2; ** l'cd * * + s'd1	# d1 = 2b^3 - 9abc + 27(a^2)d
-F1; s'+- :C;									# Call C with +- as 1 (+)
-l'rC F0; = (p F-1; s'+- :C;)
-l'rC F0; = (p F1; s'rC)
-F-1; F3; l'ca * /
-l'cb
-{<f> d $xi; S ** l'rC d s'xk * l'd0 l'xk / * .F Cx0A.C}
-F0; :f;
-F1; :f;
-F2; :f;
+F1; s'+- :C;									# call C with +- as 1 (+)
+l'rC F0; = (p F-1; s'+- :C;)							# if C is 0, flip the sign
+l'rC F0; = (p F1; s'rC)								# we have to avoid 0/0
+F-1; F3; l'ca * /								# -1/3a
+{<f>$xi; S ** l'rC * d s'xk l'd0 l'xk / + + * .F Cx0A.C}
+d l'cb F0; :f;
+d l'cb F1; :f;
+d l'cb F2; :f;
 q

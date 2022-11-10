@@ -83,6 +83,7 @@ typedef enum {
 	OP_TESTEQ,
 	OP_TESTGT,
 	OP_TESTLT,
+	OP_DEBUG,
 	OP_EXIT = 0
 } optype;
 
@@ -221,19 +222,34 @@ void init(stack** s) {
 	reset(*s);
 }
 
+struct {
+	operation code[SIZE];
+	uint64_t rip, wip;
+} state = {
+	.rip = 0, .wip = 0
+};
+
 operand pop(stack* s) {
 	if ((s->sp) > 0) {
 		(s->sp)--;
+		//printf("Value popped from stack @sp=%lu @rip=%lu\n", s->sp, state.rip);
+		// fflush(stdout);
 		return s->data[(s->sp)];
 	}
+	// printf("Zero popped from stack @sp=%lu @rip=%lu\n", state.rip);
+	// fflush(stdout);
 	return (operand){.intvalue = 0};
 }
 
 operand pop_mpcdefault(stack* s) {
 	if ((s->sp) > 0) {
 		(s->sp)--;
+		//printf("MPC value popped from stack @sp=%lu @rip=%lu\n", s->sp, state.rip);
+		// fflush(stdout);
 		return s->data[(s->sp)];
 	}
+	// printf("MPC zero popped from stack @sp=%lu @rip=%lu\n", s->sp, state.rip);
+	// fflush(stdout);
 	return operand_mpc_init();
 }
 
@@ -251,13 +267,6 @@ stack* working_stack;
 stack* call_stack;
 operand regs[0x10000];
 hashtable* functab, *vartab;
-
-struct {
-	operation code[SIZE];
-	uint64_t rip, wip;
-} state = {
-	.rip = 0, .wip = 0
-};
 
 void commitop(operation op) {
 	if (state.wip < SIZE) state.code[state.wip] = op;
@@ -391,6 +400,7 @@ void readop(FILE* f) {
 			break;
 		case '_':
 			fgets(opstr, 4, f);
+			if (!strcmp(opstr, "dbg")) op.op = OP_DEBUG;
 			if (!strcmp(opstr, "sin")) op.op = OP_SIN;
 			if (!strcmp(opstr, "cos")) op.op = OP_COS;
 			if (!strcmp(opstr, "tan")) op.op = OP_TAN;
@@ -527,7 +537,7 @@ void tonext(optype skipop1, optype skipop2, optype op) {
 }
 
 void parseop() {
-	operand result, jloc;
+	operand result, jloc, cmp1 = operand_mpc_init(), cmp2 = operand_mpc_init();
 	memset(&result, sizeof(operand), 1);
 	memset(&jloc, sizeof(operand), 1);
 	switch (state.code[state.rip].op) {
@@ -665,7 +675,7 @@ void parseop() {
 		case OP_NOT:
 			result = (operand){.intvalue = ~pop(working_stack).intvalue};
 			push(working_stack, result);
-            		break;
+					break;
 		case OP_PRECSET:
 			prec = pop(working_stack).intvalue % 0x10000;
 			break;
@@ -719,32 +729,47 @@ void parseop() {
 			mpfr_init2(imag, prec);
 			mpc_real(real, x.tvalue, MPC_RNDNN);
 			mpc_imag(imag, x.tvalue, MPC_RNDNN);
+			if (mpfr_cmp_ui(real, 0) != 0) {
+				mpfr_fprintf(stdout, outfmt, real, MPFR_RNDN);
+			}
+			if (mpfr_cmp_ui(real, 0) != 0 && mpfr_cmp_ui(imag, 0) != 0) {
+				fputs( " + ", stdout);
+			}
 			if (mpfr_cmp_ui(imag, 0) != 0) {
 				mpfr_fprintf(stdout, outfmt, imag, MPFR_RNDN);
-				fputs( "i + ", stdout);
+				fputc('i', stdout);
 			}
-			mpfr_fprintf(stdout, outfmt, real, MPFR_RNDN);
+			fflush(stdout);
 			mpfr_clears(real, imag, (mpfr_ptr)NULL);
 			break;
 		case OP_IPRINT:;
 			printf("%lx", pop(working_stack).intvalue);
+			fflush(stdout);
 			break;
 		case OP_CPRINT:;
 			fputc(pop(working_stack).charvalue, stdout);
+			fflush(stdout);
 			break;
 		case OP_STRPRINT:;
 			printf("%s", peek(working_stack).strvalue);
+			fflush(stdout);
 			break;
 		case OP_TESTEQ:;
-			result = (operand){.intvalue = mpc_cmp(pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue) == 0 ? 1 : 0};
-			push(working_stack, result);
-			break;
 		case OP_TESTGT:;
-			result = (operand){.intvalue = mpc_cmp(pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue) < 0 ? 1 : 0};
-			push(working_stack, result);
-			break;
 		case OP_TESTLT:;
-			result = (operand){.intvalue = mpc_cmp(pop_mpcdefault(working_stack).tvalue, pop_mpcdefault(working_stack).tvalue) > 0 ? 1 : 0};
+			mpc_set(cmp1.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
+			mpc_set(cmp2.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
+			switch (state.code[state.rip].op) {
+				case OP_TESTEQ:
+					result = (operand){.intvalue = MPC_INEX_RE(mpc_cmp(cmp1.tvalue, cmp2.tvalue)) == 0 ? 1 : 0};
+					break;
+				case OP_TESTGT:
+					result = (operand){.intvalue = MPC_INEX_RE(mpc_cmp(cmp1.tvalue, cmp2.tvalue)) < 0 ? 1 : 0};
+					break;
+				case OP_TESTLT:
+					result = (operand){.intvalue = MPC_INEX_RE(mpc_cmp(cmp1.tvalue, cmp2.tvalue)) > 0 ? 1 : 0};
+					break;
+			}
 			push(working_stack, result);
 			break;
 		case OP_IFBEGIN:;
@@ -825,7 +850,7 @@ void parseop() {
 				swap1 = operand_mpc_init();
 				swap2 = operand_mpc_init();
 				mpc_set(swap1.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
-				mpc_set(swap1.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
+				mpc_set(swap2.tvalue, pop_mpcdefault(working_stack).tvalue, MPC_RNDNN);
 			}
 			else {
 				swap1 = pop(working_stack);
@@ -860,12 +885,18 @@ void parseop() {
 			free(pop(working_stack).strvalue);
 			working_stack->data[(working_stack->sp) + 1].strvalue = NULL;
 			break;
+		case OP_DEBUG:;
+			printf("DEBUG: working_stack sp=%ld, call_stack sp=%ld, state rip=%ld\n", working_stack->sp, call_stack->sp, state.rip);
+			fflush(stdout);
+			break;
 		case OP_EXIT:;
-			fprintf(stdout, "\nEXITING [%lu]\n", state.rip);
+			fprintf(stdout, "q operation at [%lu], exiting\n", state.rip);
 			exit(0);
 			break;
-    }
-    state.rip++;
+	}
+	mpc_clear(cmp1.tvalue);
+	mpc_clear(cmp2.tvalue);
+	state.rip++;
 }
 
 int main(int argc, char** argv) {
